@@ -8,7 +8,7 @@ from langchain.callbacks.manager import (
 from langchain.llms.base import LLM
 from langchain.pydantic_v1 import Extra, Field, root_validator
 from langchain.schema.output import GenerationChunk
-from langchain.utils import get_pydantic_field_names
+from langchain.utils import build_extra_kwargs, get_pydantic_field_names
 
 logger = logging.getLogger(__name__)
 
@@ -104,27 +104,11 @@ class HuggingFaceTextGenInference(LLM):
     @root_validator(pre=True)
     def build_extra(cls, values: Dict[str, Any]) -> Dict[str, Any]:
         """Build extra kwargs from additional params that were passed in."""
-        all_required_field_names = get_pydantic_field_names(cls)
-        extra = values.get("model_kwargs", {})
-        for field_name in list(values):
-            if field_name in extra:
-                raise ValueError(f"Found {field_name} supplied twice.")
-            if field_name not in all_required_field_names:
-                logger.warning(
-                    f"""WARNING! {field_name} is not default parameter.
-                    {field_name} was transferred to model_kwargs.
-                    Please confirm that {field_name} is what you intended."""
-                )
-                extra[field_name] = values.pop(field_name)
-
-        invalid_model_kwargs = all_required_field_names.intersection(extra.keys())
-        if invalid_model_kwargs:
-            raise ValueError(
-                f"Parameters {invalid_model_kwargs} should be specified explicitly. "
-                f"Instead they were passed in as part of `model_kwargs` parameter."
-            )
-
-        values["model_kwargs"] = extra
+        values["model_kwargs"] = build_extra_kwargs(
+            extra_kwargs=values.get("model_kwargs", {}),
+            values=values,
+            all_required_field_names=get_pydantic_field_names(cls),
+        )
         return values
 
     @root_validator()
@@ -190,20 +174,33 @@ class HuggingFaceTextGenInference(LLM):
         **kwargs: Any,
     ) -> str:
         if self.streaming:
-            completion = ""
-            for chunk in self._stream(prompt, stop, run_manager, **kwargs):
-                completion += chunk.text
-            return completion
+            return self._stream_response(prompt, stop, run_manager, **kwargs)
 
         invocation_params = self._invocation_params(stop, **kwargs)
         res = self.client.generate(prompt, **invocation_params)
-        # remove stop sequences from the end of the generated text
-        for stop_seq in invocation_params["stop_sequences"]:
-            if stop_seq in res.generated_text:
-                res.generated_text = res.generated_text[
-                    : res.generated_text.index(stop_seq)
-                ]
-        return res.generated_text
+        return self._remove_stop_sequences(
+            text=res.generated_text, stop_sequences=invocation_params["stop_sequences"]
+        )
+
+    def _stream_response(
+        self,
+        prompt: str,
+        stop: Optional[List[str]] = None,
+        run_manager: Optional[CallbackManagerForLLMRun] = None,
+        **kwargs: Any,
+    ) -> Iterator[str]:
+        completion = ""
+        for chunk in self._stream(prompt, stop, run_manager, **kwargs):
+            completion += chunk.text
+        return completion
+
+    def _remove_stop_sequences(self, text: str, stop_sequences: List[str]) -> str:
+        """Remove stop sequences from the end of the generated text"""
+        for stop_seq in stop_sequences:
+            if stop_seq in text:
+                text = text[: text.index(stop_seq)]
+
+        return text
 
     async def _acall(
         self,

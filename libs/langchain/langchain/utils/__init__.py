@@ -15,6 +15,7 @@ from langchain.utils.input import (
 from langchain.utils.math import cosine_similarity, cosine_similarity_top_k
 from langchain.utils.strings import comma_list, stringify_dict, stringify_value
 from langchain.utils.utils import (
+    build_extra_kwargs,
     check_package_version,
     get_pydantic_field_names,
     guard_import,
@@ -24,6 +25,7 @@ from langchain.utils.utils import (
 )
 
 __all__ = [
+    "build_extra_kwargs",
     "StrictFormatter",
     "check_package_version",
     "comma_list",
